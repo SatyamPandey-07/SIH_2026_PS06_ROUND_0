@@ -4,6 +4,7 @@ from athena.stage1_phonetic import Stage1PhoneticMatcher
 from athena.stage2_semantic import Stage2SemanticMatcher
 from athena.stage3_graph_xai import Stage3GraphAndXAI
 from athena.rules_engine import PRGIRulesEngine
+from athena.certificate import generate_verification_certificate
 from athena.cli import main
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "Stage2SemanticMatcher",
     "Stage3GraphAndXAI",
     "PRGIRulesEngine",
+    "generate_verification_certificate",
     "main"
 ]

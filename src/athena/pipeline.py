@@ -1,9 +1,16 @@
 import time
+import re
 from athena.data_loader import PRGIDataLoader
 from athena.stage1_phonetic import Stage1PhoneticMatcher
 from athena.stage2_semantic import Stage2SemanticMatcher
 from athena.stage3_graph_xai import Stage3GraphAndXAI
-from athena.rules_engine import PRGIRulesEngine
+from athena.rules_engine import PRGIRulesEngine, EMBLEM_RESTRICTED_WORDS, PERIODICITY_TERMS
+
+DISTINCTIVE_QUALIFIERS = [
+    "Chronicle", "Observer", "Horizon", "Darpan", "Chetna",
+    "Manthan", "Sankalp", "Deepak", "Sandesh", "Vani",
+    "Insight", "Sentinel", "Pratibha", "Prakash", "Kiran"
+]
 
 class AthenaVerificationPipeline:
     def __init__(self, data_loader: PRGIDataLoader = None):
@@ -12,6 +19,45 @@ class AthenaVerificationPipeline:
         self.stage2 = Stage2SemanticMatcher(self.loader)
         self.stage3 = Stage3GraphAndXAI(self.loader)
         self.rules = PRGIRulesEngine()
+
+    def generate_smart_alternatives(self, proposed_title: str, state: str = "") -> list:
+        """
+        Generates unique, compliant title alternatives that avoid existing registered titles and PRGI restrictions.
+        """
+        # Clean title from restricted words and periodicity terms
+        clean_words = re.findall(r"\b\w+\b", proposed_title)
+        safe_words = [
+            w for w in clean_words
+            if w.upper() not in EMBLEM_RESTRICTED_WORDS and w.upper() not in PERIODICITY_TERMS
+        ]
+        
+        base_term = " ".join(safe_words).title() if safe_words else "Samachar"
+        alternatives = []
+        
+        # Suffix combinations
+        for qual in DISTINCTIVE_QUALIFIERS:
+            candidate_alt = f"{base_term} {qual}".strip()
+            # Fast check if candidate_alt already exists
+            cand_clean = re.sub(r"[^\w\s]", " ", candidate_alt.upper()).strip()
+            if cand_clean not in self.loader.titles:
+                alternatives.append({
+                    "title": candidate_alt,
+                    "reason": f"Distinctive qualifier '{qual}' added to avoid duplicate collision."
+                })
+            if len(alternatives) >= 4:
+                break
+                
+        # State/Regional combination if state provided
+        if state and state.strip():
+            st_clean = state.strip().title()
+            regional_alt = f"{st_clean} {base_term}".strip()
+            if re.sub(r"[^\w\s]", " ", regional_alt.upper()).strip() not in self.loader.titles:
+                alternatives.append({
+                    "title": regional_alt,
+                    "reason": f"Regional qualifier '{st_clean}' establishes distinct local identity."
+                })
+                
+        return alternatives[:4]
 
     def verify_title(
         self,
@@ -84,7 +130,6 @@ class AthenaVerificationPipeline:
         highest_similarity = max(max_s1, max_s2)
 
         # Calculation of Acceptance Probability (Uniqueness & Compliance)
-        # 100% means perfectly unique and compliant, 0% means direct collision / violation
         uniqueness_penalty = highest_similarity * 80.0
         
         rule_penalty = 0.0
@@ -103,17 +148,17 @@ class AthenaVerificationPipeline:
         acceptance_probability = round(acceptance_probability, 1)
 
         # Determine Decision Status
-        if acceptance_probability >= 75.0 and rules_res["is_compliant"]:
+        if acceptance_probability >= 70.0 and rules_res["is_compliant"]:
             status = "APPROVED"
-            status_desc = "High probability of approval. Title is unique and compliant with PRGI guidelines."
+            status_desc = "High probability of approval. Title is distinctive and compliant with statutory PRGI rules."
             status_color = "green"
         elif acceptance_probability >= 45.0:
             status = "UNDER_REVIEW"
-            status_desc = "Moderate risk of collision or guideline warning. Manual review recommended."
+            status_desc = "Moderate risk of collision or guideline warning. Manual registrar evaluation recommended."
             status_color = "orange"
         else:
             status = "REJECTED"
-            status_desc = "High probability of rejection due to existing duplicate titles or PRGI guideline violations."
+            status_desc = "High probability of rejection due to existing duplicate titles or statutory guideline violations."
             status_color = "red"
 
         # Actionable Recommendations
@@ -121,11 +166,10 @@ class AthenaVerificationPipeline:
         if highest_similarity > 0.80 and combined_candidates:
             top_match = combined_candidates[0]["matched_title"]
             recommendations.append(f"Title has {highest_similarity*100:.1f}% similarity with existing registered title '{top_match}'.")
-            # Suggest alternative variants
-            base_tokens = [t for t in proposed_title.split() if len(t) > 2]
-            if base_tokens:
-                recs_tokens = " ".join(base_tokens)
-                recommendations.append(f"Alternative: Try combining '{recs_tokens}' with a distinct local region or niche descriptor.")
+            
+        smart_alternatives = []
+        if status in ["REJECTED", "UNDER_REVIEW"]:
+            smart_alternatives = self.generate_smart_alternatives(proposed_title, state=state)
 
         total_time_ms = (time.time() - t0) * 1000.0
 
@@ -158,5 +202,6 @@ class AthenaVerificationPipeline:
             "compliance": rules_res,
             "top_candidates": combined_candidates[:10],
             "recommendations": recommendations,
+            "smart_alternatives": smart_alternatives,
             "total_latency_ms": round(total_time_ms, 2)
         }
