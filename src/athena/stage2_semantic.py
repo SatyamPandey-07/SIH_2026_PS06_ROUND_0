@@ -99,10 +99,17 @@ class Stage2SemanticMatcher:
             row = self.loader.df.iloc[idx]
             db_words = set(re.findall(r"\b\w+\b", str(row["clean_title"])))
             
-            # Word coverage penalty if query has multiple unique words but db title only has 1
-            if len(query_words) >= 3 and len(db_words & query_words) <= 1:
-                score = score * 0.65
-                
+            # Word coverage penalty: calculate Jaccard word overlap and query coverage
+            common_words = db_words & query_words
+            union_words = db_words | query_words
+            jaccard = len(common_words) / max(1, len(union_words))
+            query_cov = len(common_words) / max(1, len(query_words))
+            
+            # If word sets are not identical, scale raw TF-IDF score by Jaccard and word coverage
+            if jaccard < 1.0:
+                coverage_factor = 0.35 + 0.65 * jaccard
+                score = score * coverage_factor
+
             is_flagged = score >= threshold
             if is_flagged:
                 flagged = True

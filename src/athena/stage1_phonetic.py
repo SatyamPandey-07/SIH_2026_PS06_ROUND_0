@@ -97,6 +97,16 @@ class Stage1PhoneticMatcher:
             w2 = set(db_title.split())
             token_jaccard = len(w1 & w2) / max(1, len(w1 | w2))
             
+            # Identify core brand words by removing generic publication suffixes/prefixes
+            GENERIC_TERMS = {
+                "CHRONICLE", "OBSERVER", "HORIZON", "DARPAN", "CHETNA", "MANTHAN", "SANKALP",
+                "DEEPAK", "SANDESH", "VANI", "INSIGHT", "SENTINEL", "PRATIBHA", "PRAKASH", "KIRAN",
+                "TIMES", "NEWS", "EXPRESS", "BULLETIN", "INDIA", "BHARAT", "GAZETTE", "POST",
+                "DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "DAINIK", "SAPTAHIK", "MASIK", "SAMAY"
+            }
+            core1 = {w for w in w1 if w not in GENERIC_TERMS}
+            core2 = {w for w in w2 if w not in GENERIC_TERMS}
+            
             # Weighted Stage 1 Score
             # If lengths differ significantly, discount raw Jaro-Winkler
             len_ratio = min(len(clean_input), len(db_title)) / max(len(clean_input), len(db_title))
@@ -110,11 +120,17 @@ class Stage1PhoneticMatcher:
                 0.90 if (soundex_match and metaphone_match and token_jaccard > 0.6) else 0.0
             )
             
+            # If core brand words exist and are completely disjoint/different, cap similarity score at 0.55
+            if core1 and core2 and not (core1 & core2):
+                core_jaccard = len(core1 & core2) / max(1, len(core1 | core2))
+                if core_jaccard == 0.0:
+                    combined_score = min(combined_score, 0.55)
+
             # Flagging rules from README
             # Phonetic match >85% | Levenshtein <3 | Jaro-Winkler >0.85
             is_flagged = (
                 (soundex_match or metaphone_match) and combined_score >= 0.85
-            ) or (lev_dist < 3 and min(len(clean_input), len(db_title)) > 4) or (fuzz_ratio >= 0.85) or (token_sort_ratio >= 0.90 and token_jaccard >= 0.75)
+            ) or (lev_dist < 3 and min(len(clean_input), len(db_title)) > 4 and token_jaccard >= 0.5) or (fuzz_ratio >= 0.85 and token_jaccard >= 0.6) or (token_sort_ratio >= 0.90 and token_jaccard >= 0.75)
 
             
             if is_flagged:

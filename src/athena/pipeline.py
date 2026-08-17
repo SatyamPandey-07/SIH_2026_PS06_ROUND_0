@@ -20,9 +20,10 @@ class AthenaVerificationPipeline:
         self.stage3 = Stage3GraphAndXAI(self.loader)
         self.rules = PRGIRulesEngine()
 
-    def generate_smart_alternatives(self, proposed_title: str, state: str = "") -> list:
+    def generate_smart_alternatives(self, proposed_title: str, language: str = "", periodicity: str = "", state: str = "") -> list:
         """
         Generates unique, compliant title alternatives that avoid existing registered titles and PRGI restrictions.
+        Pre-verifies generated titles so they pass verification with high approval probability.
         """
         # Clean title from restricted words and periodicity terms
         clean_words = re.findall(r"\b\w+\b", proposed_title)
@@ -34,28 +35,44 @@ class AthenaVerificationPipeline:
         base_term = " ".join(safe_words).title() if safe_words else "Samachar"
         alternatives = []
         
-        # Suffix combinations
-        for qual in DISTINCTIVE_QUALIFIERS:
-            candidate_alt = f"{base_term} {qual}".strip()
-            # Fast check if candidate_alt already exists
-            cand_clean = re.sub(r"[^\w\s]", " ", candidate_alt.upper()).strip()
-            if cand_clean not in self.loader.titles:
-                alternatives.append({
-                    "title": candidate_alt,
-                    "reason": f"Distinctive qualifier '{qual}' added to avoid duplicate collision."
-                })
-            if len(alternatives) >= 4:
-                break
-                
-        # State/Regional combination if state provided
+        # Helper to check if candidate title passes verification as APPROVED
+        def is_verified_approved(cand_title):
+            cand_clean = re.sub(r"[^\w\s]", " ", cand_title.upper()).strip()
+            if cand_clean in self.loader.titles:
+                return False, None
+            # Lightweight verification check
+            s1_c = self.stage1.match(cand_title, top_k=5)
+            s2_c = self.stage2.match(cand_title, top_k=5)
+            max_s = max(s1_c["max_score"], s2_c["max_score"])
+            if max_s > 0.78:
+                return False, None
+            rules_c = self.rules.evaluate_compliance(cand_title, language=language, periodicity=periodicity, state=state, candidates=s1_c["candidates"])
+            if not rules_c["is_compliant"] or rules_c["violations"]:
+                return False, None
+            return True, max_s
+
+        # Try state regional qualifier first if state provided
         if state and state.strip():
             st_clean = state.strip().title()
             regional_alt = f"{st_clean} {base_term}".strip()
-            if re.sub(r"[^\w\s]", " ", regional_alt.upper()).strip() not in self.loader.titles:
+            ok, sim = is_verified_approved(regional_alt)
+            if ok:
                 alternatives.append({
                     "title": regional_alt,
-                    "reason": f"Regional qualifier '{st_clean}' establishes distinct local identity."
+                    "reason": f"Regional qualifier '{st_clean}' establishes distinct local identity and passes statutory verification."
                 })
+
+        # Suffix combinations
+        for qual in DISTINCTIVE_QUALIFIERS:
+            candidate_alt = f"{base_term} {qual}".strip()
+            ok, sim = is_verified_approved(candidate_alt)
+            if ok:
+                alternatives.append({
+                    "title": candidate_alt,
+                    "reason": f"Distinctive qualifier '{qual}' added to establish brand uniqueness while passing PRGI compliance."
+                })
+            if len(alternatives) >= 4:
+                break
                 
         return alternatives[:4]
 
@@ -129,9 +146,14 @@ class AthenaVerificationPipeline:
         max_s2 = s2_res["max_score"]
         highest_similarity = max(max_s1, max_s2)
 
-        # Calculation of Acceptance Probability (Uniqueness & Compliance)
-        uniqueness_penalty = highest_similarity * 80.0
-        
+        # Non-linear Acceptance Penalty curve based on empirical PRGI collision thresholds
+        if highest_similarity <= 0.60:
+            uniqueness_penalty = highest_similarity * 20.0
+        elif highest_similarity <= 0.80:
+            uniqueness_penalty = 12.0 + (highest_similarity - 0.60) * 115.0
+        else:
+            uniqueness_penalty = 35.0 + (highest_similarity - 0.80) * 275.0
+
         rule_penalty = 0.0
         for v in rules_res["violations"]:
             if v["severity"] == "CRITICAL":
@@ -169,7 +191,7 @@ class AthenaVerificationPipeline:
             
         smart_alternatives = []
         if status in ["REJECTED", "UNDER_REVIEW"]:
-            smart_alternatives = self.generate_smart_alternatives(proposed_title, state=state)
+            smart_alternatives = self.generate_smart_alternatives(proposed_title, language=language, periodicity=periodicity, state=state)
 
         total_time_ms = (time.time() - t0) * 1000.0
 
