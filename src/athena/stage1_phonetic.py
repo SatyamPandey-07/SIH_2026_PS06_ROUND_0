@@ -107,6 +107,22 @@ class Stage1PhoneticMatcher:
             core1 = {w for w in w1 if w not in GENERIC_TERMS}
             core2 = {w for w in w2 if w not in GENERIC_TERMS}
             
+            # Check phonetic/spelling similarity between core words
+            core_phonetic_overlap = False
+            for w_a in core1:
+                for w_b in core2:
+                    if (
+                        w_a == w_b
+                        or jellyfish.soundex(w_a) == jellyfish.soundex(w_b)
+                        or jellyfish.metaphone(w_a) == jellyfish.metaphone(w_b)
+                        or distance.Levenshtein.distance(w_a, w_b) <= 2
+                        or fuzz.ratio(w_a, w_b) >= 80.0
+                    ):
+                        core_phonetic_overlap = True
+                        break
+                if core_phonetic_overlap:
+                    break
+
             # Weighted Stage 1 Score
             # If lengths differ significantly, discount raw Jaro-Winkler
             len_ratio = min(len(clean_input), len(db_title)) / max(len(clean_input), len(db_title))
@@ -117,20 +133,19 @@ class Stage1PhoneticMatcher:
                 token_sort_ratio * (0.6 + 0.4 * token_jaccard),
                 adjusted_jw if len_ratio > 0.6 else fuzz_ratio,
                 0.95 if (lev_dist <= 1 and abs(len(clean_input) - len(db_title)) <= 1) else 0.0,
-                0.90 if (soundex_match and metaphone_match and token_jaccard > 0.6) else 0.0
+                0.90 if (soundex_match and metaphone_match and (token_jaccard > 0.6 or core_phonetic_overlap)) else 0.0,
+                0.88 if (core_phonetic_overlap and lev_dist <= 2 and abs(len(clean_input) - len(db_title)) <= 2) else 0.0
             )
             
-            # If core brand words exist and are completely disjoint/different, cap similarity score at 0.55
-            if core1 and core2 and not (core1 & core2):
-                core_jaccard = len(core1 & core2) / max(1, len(core1 | core2))
-                if core_jaccard == 0.0:
-                    combined_score = min(combined_score, 0.55)
+            # If core brand words exist and are completely disjoint and have zero phonetic similarity, cap score
+            if core1 and core2 and not (core1 & core2) and not core_phonetic_overlap:
+                combined_score = min(combined_score, 0.55)
 
-            # Flagging rules from README
+            # Flagging rules from README / PS06
             # Phonetic match >85% | Levenshtein <3 | Jaro-Winkler >0.85
             is_flagged = (
                 (soundex_match or metaphone_match) and combined_score >= 0.85
-            ) or (lev_dist < 3 and min(len(clean_input), len(db_title)) > 4 and token_jaccard >= 0.5) or (fuzz_ratio >= 0.85 and token_jaccard >= 0.6) or (token_sort_ratio >= 0.90 and token_jaccard >= 0.75)
+            ) or (lev_dist < 3 and min(len(clean_input), len(db_title)) > 4 and (token_jaccard >= 0.5 or core_phonetic_overlap)) or (fuzz_ratio >= 0.85 and (token_jaccard >= 0.6 or core_phonetic_overlap)) or (token_sort_ratio >= 0.90 and token_jaccard >= 0.75) or (core_phonetic_overlap and combined_score >= 0.85)
 
             
             if is_flagged:

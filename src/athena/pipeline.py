@@ -5,6 +5,7 @@ from athena.stage1_phonetic import Stage1PhoneticMatcher
 from athena.stage2_semantic import Stage2SemanticMatcher
 from athena.stage3_graph_xai import Stage3GraphAndXAI
 from athena.rules_engine import PRGIRulesEngine, EMBLEM_RESTRICTED_WORDS, PERIODICITY_TERMS
+from athena.app_tracker import ApplicationTracker
 
 DISTINCTIVE_QUALIFIERS = [
     "Chronicle", "Observer", "Horizon", "Darpan", "Chetna",
@@ -18,14 +19,14 @@ class AthenaVerificationPipeline:
         self.stage1 = Stage1PhoneticMatcher(self.loader)
         self.stage2 = Stage2SemanticMatcher(self.loader)
         self.stage3 = Stage3GraphAndXAI(self.loader)
-        self.rules = PRGIRulesEngine()
+        self.rules = PRGIRulesEngine(self.loader)
+        self.tracker = ApplicationTracker.get_instance()
 
     def generate_smart_alternatives(self, proposed_title: str, language: str = "", periodicity: str = "", state: str = "") -> list:
         """
         Generates unique, compliant title alternatives that avoid existing registered titles and PRGI restrictions.
         Pre-verifies generated titles so they pass verification with high approval probability.
         """
-        # Clean title from restricted words and periodicity terms
         clean_words = re.findall(r"\b\w+\b", proposed_title)
         safe_words = [
             w for w in clean_words
@@ -35,23 +36,20 @@ class AthenaVerificationPipeline:
         base_term = " ".join(safe_words).title() if safe_words else "Samachar"
         alternatives = []
         
-        # Helper to check if candidate title passes verification as APPROVED
         def is_verified_approved(cand_title):
             cand_clean = re.sub(r"[^\w\s]", " ", cand_title.upper()).strip()
             if cand_clean in self.loader.titles:
                 return False, None
-            # Lightweight verification check
             s1_c = self.stage1.match(cand_title, top_k=5)
             s2_c = self.stage2.match(cand_title, top_k=5)
             max_s = max(s1_c["max_score"], s2_c["max_score"])
-            if max_s > 0.78:
+            if max_s > 0.75:
                 return False, None
             rules_c = self.rules.evaluate_compliance(cand_title, language=language, periodicity=periodicity, state=state, candidates=s1_c["candidates"])
             if not rules_c["is_compliant"] or rules_c["violations"]:
                 return False, None
             return True, max_s
 
-        # Try state regional qualifier first if state provided
         if state and state.strip():
             st_clean = state.strip().title()
             regional_alt = f"{st_clean} {base_term}".strip()
@@ -62,7 +60,6 @@ class AthenaVerificationPipeline:
                     "reason": f"Regional qualifier '{st_clean}' establishes distinct local identity and passes statutory verification."
                 })
 
-        # Suffix combinations
         for qual in DISTINCTIVE_QUALIFIERS:
             candidate_alt = f"{base_term} {qual}".strip()
             ok, sim = is_verified_approved(candidate_alt)
@@ -88,6 +85,9 @@ class AthenaVerificationPipeline:
     ) -> dict:
         t0 = time.time()
         
+        # Check active submitted applications tracker (Requirement 5b / Expected Solution c)
+        prior_conflicts = self.tracker.check_prior_applications(proposed_title)
+
         # 1. Run Stage 1 (Fast Phonetic & Fuzzy)
         t_s1_0 = time.time()
         s1_res = self.stage1.match(proposed_title, top_k=10)
@@ -138,7 +138,8 @@ class AthenaVerificationPipeline:
             language=language,
             periodicity=periodicity,
             state=state,
-            candidates=combined_candidates
+            candidates=combined_candidates,
+            prior_conflicts=prior_conflicts
         )
 
         # 5. Compute Final Probability Score & Status
@@ -146,27 +147,32 @@ class AthenaVerificationPipeline:
         max_s2 = s2_res["max_score"]
         highest_similarity = max(max_s1, max_s2)
 
-        # Non-linear Acceptance Penalty curve based on empirical PRGI collision thresholds
-        if highest_similarity <= 0.60:
+        # Non-linear Acceptance Penalty curve
+        if highest_similarity <= 0.50:
             uniqueness_penalty = highest_similarity * 20.0
-        elif highest_similarity <= 0.80:
-            uniqueness_penalty = 12.0 + (highest_similarity - 0.60) * 115.0
+        elif highest_similarity <= 0.75:
+            uniqueness_penalty = 10.0 + (highest_similarity - 0.50) * 120.0
         else:
-            uniqueness_penalty = 35.0 + (highest_similarity - 0.80) * 275.0
+            uniqueness_penalty = 40.0 + (highest_similarity - 0.75) * 240.0
 
         rule_penalty = 0.0
         for v in rules_res["violations"]:
             if v["severity"] == "CRITICAL":
-                rule_penalty += 75.0
+                rule_penalty += 80.0
             elif v["severity"] == "HIGH":
-                rule_penalty += 45.0
+                rule_penalty += 50.0
             elif v["severity"] == "MEDIUM":
-                rule_penalty += 20.0
+                rule_penalty += 25.0
                 
         for w in rules_res["warnings"]:
             rule_penalty += 10.0
 
-        acceptance_probability = max(0.0, min(100.0, 100.0 - (uniqueness_penalty + rule_penalty)))
+        raw_prob = 100.0 - (uniqueness_penalty + rule_penalty)
+        
+        # Enforce PS06 Expected Solution (a) Constraint:
+        # "If a title has a similarity score of 80%, the verification probability shall not be more than 100% - 80% = 20%"
+        max_allowed_prob = max(0.0, 100.0 - (highest_similarity * 100.0))
+        acceptance_probability = max(0.0, min(raw_prob, max_allowed_prob))
         acceptance_probability = round(acceptance_probability, 1)
 
         # Determine Decision Status
@@ -174,7 +180,7 @@ class AthenaVerificationPipeline:
             status = "APPROVED"
             status_desc = "High probability of approval. Title is distinctive and compliant with statutory PRGI rules."
             status_color = "green"
-        elif acceptance_probability >= 45.0:
+        elif acceptance_probability >= 30.0 and not any(v["severity"] == "CRITICAL" for v in rules_res["violations"]):
             status = "UNDER_REVIEW"
             status_desc = "Moderate risk of collision or guideline warning. Manual registrar evaluation recommended."
             status_color = "orange"
@@ -185,7 +191,7 @@ class AthenaVerificationPipeline:
 
         # Actionable Recommendations
         recommendations = list(rules_res["recommendations"])
-        if highest_similarity > 0.80 and combined_candidates:
+        if highest_similarity > 0.75 and combined_candidates:
             top_match = combined_candidates[0]["matched_title"]
             recommendations.append(f"Title has {highest_similarity*100:.1f}% similarity with existing registered title '{top_match}'.")
             
@@ -225,5 +231,6 @@ class AthenaVerificationPipeline:
             "top_candidates": combined_candidates[:10],
             "recommendations": recommendations,
             "smart_alternatives": smart_alternatives,
+            "prior_conflicts": prior_conflicts,
             "total_latency_ms": round(total_time_ms, 2)
         }

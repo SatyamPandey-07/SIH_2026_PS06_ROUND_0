@@ -5,6 +5,7 @@ from athena.stage2_semantic import Stage2SemanticMatcher
 from athena.stage3_graph_xai import Stage3GraphAndXAI
 from athena.rules_engine import PRGIRulesEngine
 from athena.certificate import generate_verification_certificate
+from athena.app_tracker import ApplicationTracker
 from athena.cli import main
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "Stage3GraphAndXAI",
     "PRGIRulesEngine",
     "generate_verification_certificate",
+    "ApplicationTracker",
     "main"
 ]
