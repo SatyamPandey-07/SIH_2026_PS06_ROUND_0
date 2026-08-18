@@ -592,16 +592,30 @@ if portal_mode == "Publisher / Applicant Portal":
             with dt_alts:
                 st.subheader("AI-Suggested Compliant Title Variations")
                 alts = audit_res.get("smart_alternatives", [])
+                stat = audit_res.get("status", "")
                 if alts:
+                    approved_alts = [a for a in alts if not a["reason"].startswith("⚠️")]
+                    review_alts = [a for a in alts if a["reason"].startswith("⚠️")]
+                    if approved_alts:
+                        st.caption(f"✅ {len(approved_alts)} fully APPROVED alternative(s) found — safe to submit immediately:")
+                    if review_alts:
+                        st.caption(f"⚠️ {len(review_alts)} UNDER REVIEW alternative(s) — lower similarity risk, manual registrar review may be needed:")
                     for a in alts:
+                        is_review = a["reason"].startswith("⚠️")
+                        border_color = "rgba(255, 167, 38, 0.35)" if is_review else "rgba(33, 150, 243, 0.25)"
+                        bg_color = "rgba(255, 167, 38, 0.06)" if is_review else "rgba(33, 150, 243, 0.06)"
+                        title_color = "#ffa726" if is_review else "#64b5f6"
                         st.markdown(f"""
-                        <div class="alt-card">
-                            <div class="alt-title">{a['title']}</div>
-                            <div class="alt-reason">{a['reason']}</div>
+                        <div style="background:{bg_color}; border:1px solid {border_color}; border-radius:6px; padding:10px 14px; margin-bottom:8px;">
+                            <div style="font-weight:700; color:{title_color}; font-size:0.95rem;">{a['title']}</div>
+                            <div style="color:#b0bec5; font-size:0.82rem; margin-top:2px;">{a['reason']}</div>
                         </div>
                         """, unsafe_allow_html=True)
+                elif stat == "APPROVED":
+                    st.success("The proposed title is distinctive and fully compliant. Ready for application submission!")
                 else:
-                    st.success("The proposed title is distinctive and compliant. Ready for application submission!")
+                    st.warning("No automated alternatives could be generated for this exact word structure. Please consider modifying the primary core brand word.")
+
 
             with dt_rules:
                 st.subheader("Statutory Compliance Findings")

@@ -6,16 +6,28 @@ from athena.stage2_semantic import Stage2SemanticMatcher
 from athena.stage3_graph_xai import Stage3GraphAndXAI
 from athena.rules_engine import PRGIRulesEngine, EMBLEM_RESTRICTED_WORDS, PERIODICITY_TERMS
 from athena.app_tracker import ApplicationTracker
+from athena.derogatory_shield import DerogatoryShield
 
 DISTINCTIVE_QUALIFIERS = [
-    "Chronicle", "Observer", "Horizon", "Darpan", "Chetna",
+    "Horizon", "Chetna", "Darpan", "Insight", "Sentinel",
     "Manthan", "Sankalp", "Deepak", "Sandesh", "Vani",
-    "Insight", "Sentinel", "Pratibha", "Prakash", "Kiran"
+    "Pratibha", "Prakash", "Kiran", "Post", "Times", "Chronicle", "Observer"
 ]
+
+GENERIC_PUBLICATION_TERMS = {
+    "CHRONICLE", "OBSERVER", "HORIZON", "DARPAN", "CHETNA", "MANTHAN", "SANKALP",
+    "DEEPAK", "SANDESH", "VANI", "INSIGHT", "SENTINEL", "PRATIBHA", "PRAKASH", "KIRAN",
+    "TIMES", "NEWS", "EXPRESS", "BULLETIN", "INDIA", "BHARAT", "GAZETTE", "POST",
+    "DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "DAINIK", "SAPTAHIK", "MASIK", "SAMAY",
+    "PATRIKA", "SAMPARK", "HERALD", "TRIBUNE", "MIRROR", "LEADER", "DISPATCH", "SAMACHAR"
+}
+
+BRAND_PREFIXES = ["Nav", "Vindhya", "Prabhat", "Apex", "Subh", "Naya", "Avani", "Uday"]
 
 class AthenaVerificationPipeline:
     def __init__(self, data_loader: PRGIDataLoader = None):
         self.loader = data_loader or PRGIDataLoader.get_instance()
+        self.stage0 = DerogatoryShield.get_instance()
         self.stage1 = Stage1PhoneticMatcher(self.loader)
         self.stage2 = Stage2SemanticMatcher(self.loader)
         self.stage3 = Stage3GraphAndXAI(self.loader)
@@ -28,50 +40,107 @@ class AthenaVerificationPipeline:
         Pre-verifies generated titles so they pass verification with high approval probability.
         """
         clean_words = re.findall(r"\b\w+\b", proposed_title)
-        safe_words = [
+        
+        # 1. Filter restricted & periodicity words
+        unrestricted_words = [
             w for w in clean_words
             if w.upper() not in EMBLEM_RESTRICTED_WORDS and w.upper() not in PERIODICITY_TERMS
         ]
         
-        base_term = " ".join(safe_words).title() if safe_words else "Samachar"
-        alternatives = []
+        # 2. Isolate core brand words (excluding generic publication suffixes)
+        core_words = [
+            w for w in unrestricted_words
+            if w.upper() not in GENERIC_PUBLICATION_TERMS
+        ]
         
-        def is_verified_approved(cand_title):
-            cand_clean = re.sub(r"[^\w\s]", " ", cand_title.upper()).strip()
-            if cand_clean in self.loader.titles:
-                return False, None
-            s1_c = self.stage1.match(cand_title, top_k=5)
-            s2_c = self.stage2.match(cand_title, top_k=5)
-            max_s = max(s1_c["max_score"], s2_c["max_score"])
-            if max_s > 0.75:
-                return False, None
-            rules_c = self.rules.evaluate_compliance(cand_title, language=language, periodicity=periodicity, state=state, candidates=s1_c["candidates"])
-            if not rules_c["is_compliant"] or rules_c["violations"]:
-                return False, None
-            return True, max_s
+        if core_words:
+            core_brand = " ".join(core_words).title()
+        elif unrestricted_words:
+            core_brand = " ".join(unrestricted_words).title()
+        else:
+            core_brand = "Samachar"
+            
+        full_base = " ".join(unrestricted_words).title() if unrestricted_words else core_brand
 
-        if state and state.strip():
-            st_clean = state.strip().title()
-            regional_alt = f"{st_clean} {base_term}".strip()
-            ok, sim = is_verified_approved(regional_alt)
-            if ok:
-                alternatives.append({
-                    "title": regional_alt,
-                    "reason": f"Regional qualifier '{st_clean}' establishes distinct local identity and passes statutory verification."
+        alternatives = []
+        seen_titles = {proposed_title.upper().strip()}
+
+        def check_candidate(cand_title):
+            """Run the full verify_title pipeline. Returns (status, prob) or None if already seen/registered."""
+            cand_upper = cand_title.upper().strip()
+            if cand_upper in seen_titles or cand_upper in self.loader.titles:
+                return None
+            seen_titles.add(cand_upper)
+            result = self.verify_title(
+                proposed_title=cand_title,
+                language=language,
+                periodicity=periodicity,
+                state=state,
+                _skip_alternatives=True
+            )
+            return result["status"], result["acceptance_probability"], result["highest_similarity"]
+
+        st_clean = state.strip().title() if state and state.strip() else ""
+
+        approved = []   # status == APPROVED
+        fallback = []   # status == UNDER_REVIEW (shown if < 4 APPROVEDs found)
+
+        def _try(cand, reason_tpl):
+            r = check_candidate(cand)
+            if r is None:
+                return
+            status, prob, sim = r
+            if status == "APPROVED":
+                approved.append({"title": cand, "reason": reason_tpl.format(prob=prob, sim=sim*100)})
+            elif status == "UNDER_REVIEW" and len(fallback) < 4:
+                fallback.append({
+                    "title": cand,
+                    "reason": f"⚠️ Under Review ({prob}% probability, {sim*100:.1f}% similarity) — {reason_tpl.format(prob=prob, sim=sim*100)}"
                 })
 
+        # Strategy 1: Regional + core brand
+        if st_clean:
+            _try(f"{st_clean} {core_brand}", f"Regional qualifier '{st_clean}' distinguishes your brand by jurisdiction ({{prob}}% approval prob).")
+
+        # Strategy 2: Core brand + qualifier
         for qual in DISTINCTIVE_QUALIFIERS:
-            candidate_alt = f"{base_term} {qual}".strip()
-            ok, sim = is_verified_approved(candidate_alt)
-            if ok:
-                alternatives.append({
-                    "title": candidate_alt,
-                    "reason": f"Distinctive qualifier '{qual}' added to establish brand uniqueness while passing PRGI compliance."
-                })
-            if len(alternatives) >= 4:
-                break
-                
-        return alternatives[:4]
+            if len(approved) >= 4: break
+            if qual.upper() in [w.upper() for w in clean_words]: continue
+            _try(f"{core_brand} {qual}", f"Qualifier '{qual}' after your core brand reduces collision risk ({{prob}}% approval prob).")
+
+        # Strategy 3: Prefix + core brand
+        for pfx in BRAND_PREFIXES:
+            if len(approved) >= 4: break
+            _try(f"{pfx} {core_brand}", f"Prefix '{pfx}' creates a uniquely repositioned identity ({{prob}}% approval prob).")
+
+        # Strategy 4: Prefix + core brand + qualifier
+        for pfx in BRAND_PREFIXES:
+            if len(approved) >= 4: break
+            for qual in DISTINCTIVE_QUALIFIERS:
+                if len(approved) >= 4: break
+                if qual.upper() in [w.upper() for w in clean_words]: continue
+                _try(f"{pfx} {core_brand} {qual}", f"Three-word compound '{pfx}·{core_brand}·{qual}' for maximum distinctiveness ({{prob}}% approval prob).")
+
+        # Strategy 5: Regional + qualifier only (drop colliding core brand)
+        if len(approved) < 4 and st_clean:
+            for qual in DISTINCTIVE_QUALIFIERS:
+                if len(approved) >= 4: break
+                if qual.upper() in [w.upper() for w in clean_words]: continue
+                _try(f"{st_clean} {qual}", f"Regional + qualifier form avoids the colliding core word entirely ({{prob}}% approval prob).")
+
+        # Strategy 6: Prefix × qualifier grid (last resort — core brand dropped)
+        if len(approved) < 4:
+            for pfx in BRAND_PREFIXES:
+                if len(approved) >= 4: break
+                for qual in DISTINCTIVE_QUALIFIERS:
+                    if len(approved) >= 4: break
+                    _try(f"{pfx} {qual}", f"Fresh two-word brand with zero collision risk ({{prob}}% approval prob).")
+
+        # Fill remaining slots with best UNDER_REVIEW candidates
+        combined = approved + [f for f in fallback if f["title"] not in {a["title"] for a in approved}]
+        return combined[:4]
+
+
 
     def verify_title(
         self,
@@ -81,10 +150,16 @@ class AthenaVerificationPipeline:
         state: str = "",
         district: str = "",
         publisher: str = "",
-        owner: str = ""
+        owner: str = "",
+        _skip_alternatives: bool = False
     ) -> dict:
         t0 = time.time()
         
+        # 0. Run Stage 0 (Derogatory Content Shield)
+        t_s0_0 = time.time()
+        s0_res = self.stage0.check_title(proposed_title)
+        s0_time_ms = (time.time() - t_s0_0) * 1000.0
+
         # Check active submitted applications tracker (Requirement 5b / Expected Solution c)
         prior_conflicts = self.tracker.check_prior_applications(proposed_title)
 
@@ -142,6 +217,14 @@ class AthenaVerificationPipeline:
             prior_conflicts=prior_conflicts
         )
 
+        if s0_res["flagged"]:
+            rules_res["violations"].append({
+                "rule": "CONTENT_VIOLATION",
+                "severity": "CRITICAL" if s0_res["status"] == "REJECTED" else "WARNING",
+                "detail": f"Stage 0 Shield: Derogatory/offensive pattern detected (Confidence: {s0_res['confidence_score'] * 100:.0f}%). Flagged tokens: {s0_res['flagged_tokens']}"
+            })
+            rules_res["is_compliant"] = False
+
         # 5. Compute Final Probability Score & Status
         max_s1 = s1_res["max_score"]
         max_s2 = s2_res["max_score"]
@@ -176,7 +259,12 @@ class AthenaVerificationPipeline:
         acceptance_probability = round(acceptance_probability, 1)
 
         # Determine Decision Status
-        if acceptance_probability >= 70.0 and rules_res["is_compliant"]:
+        if s0_res["status"] == "REJECTED":
+            acceptance_probability = 0.0
+            status = "REJECTED"
+            status_desc = "Content Violation: Title contains derogatory or offensive terms flagged by Stage 0 Shield."
+            status_color = "red"
+        elif acceptance_probability >= 70.0 and rules_res["is_compliant"]:
             status = "APPROVED"
             status_desc = "High probability of approval. Title is distinctive and compliant with statutory PRGI rules."
             status_color = "green"
@@ -196,7 +284,7 @@ class AthenaVerificationPipeline:
             recommendations.append(f"Title has {highest_similarity*100:.1f}% similarity with existing registered title '{top_match}'.")
             
         smart_alternatives = []
-        if status in ["REJECTED", "UNDER_REVIEW"]:
+        if status in ["REJECTED", "UNDER_REVIEW"] and not _skip_alternatives and s0_res["status"] != "REJECTED":
             smart_alternatives = self.generate_smart_alternatives(proposed_title, language=language, periodicity=periodicity, state=state)
 
         total_time_ms = (time.time() - t0) * 1000.0
@@ -209,6 +297,12 @@ class AthenaVerificationPipeline:
             "acceptance_probability": acceptance_probability,
             "rejection_probability": round(100.0 - acceptance_probability, 1),
             "highest_similarity": round(highest_similarity, 4),
+            "stage0_results": {
+                "flagged": s0_res["flagged"],
+                "confidence_score": s0_res["confidence_score"],
+                "time_ms": round(s0_time_ms, 2),
+                "flagged_tokens": s0_res["flagged_tokens"]
+            },
             "stage1_results": {
                 "flagged": s1_res["flagged"],
                 "max_score": s1_res["max_score"],
