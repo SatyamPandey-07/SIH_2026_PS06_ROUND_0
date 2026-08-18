@@ -1,0 +1,43 @@
+direction: right
+
+Client Presentation Layer: {
+  label: "🖥️ Client Presentation Layer (React 18 SPA)"
+  Publisher Portal: "Publisher Portal\n(Real-Time Title Verification)"
+  Admin Desk: "Registrar Admin Desk\n(Queue Review & Decisioning)"
+  Analytics Dashboard: "National Analytics Dashboard\n(SVG Charts & Explorer)"
+}
+
+API Gateway Layer: {
+  label: "⚡ API Gateway Layer (FastAPI REST Server)"
+  FastAPI Server: "FastAPI REST API (api.py)\n[Uvicorn / Gunicorn Server]"
+  Endpoints: "/api/verify | /api/applications\n/api/analytics | /api/derogatory/flag"
+}
+
+Athena 4-Stage Pipeline: {
+  label: "🧠 Athena 4-Stage Waterfall Pipeline Engine"
+  Stage 0: "Stage 0: Derogatory Content Shield\n- Leetspeak Reversal (Chr0nicle -> Chronicle)\n- Soundex / Metaphone Seed Matching\n- Sub-2ms Auto-Rejection (Confidence >= 70%)"
+  Stage 1: "Stage 1: Phonetic & Fuzzy Filter\n- Core Brand Word Extractor\n- Generic Suffix Discounting (Times/Express)\n- Inverted Soundex & Metaphone Index"
+  Stage 2: "Stage 2: Cross-Lingual Vector Engine\n- Transformer Embeddings (MiniLM-L12-v2)\n- Jaccard Word Coverage Scaling"
+  Stage 3: "Stage 3: Graph xAI & Statutory Engine\n- Emblems Act & Prefix Prohibition Checkers\n- vis.js Co-Registration Cluster Graph\n- SHAP & LIME Token Feature Importance"
+}
+
+Data Persistence Layer: {
+  label: "💾 Data & State Persistence Layer"
+  Derogatory Seeds: "derogatory_seeds.json\n(Community Flagged Seeds)"
+  Applications DB: "applications.db\n(SQLite Application Tracker)"
+  PRGI Titles DB: "prgi_titles.csv\n(82,700+ Registered Title Registry)"
+}
+
+Client Presentation Layer -> API Gateway Layer: "HTTP / REST JSON"
+API Gateway Layer -> Athena 4-Stage Pipeline.Stage 0: "1. Proposed Title Input"
+
+Athena 4-Stage Pipeline.Stage 0 -> Athena 4-Stage Pipeline.Stage 1: "Cleared / Borderline"
+Athena 4-Stage Pipeline.Stage 0 -> Direct Rejection: "Flagged >= 0.70 (Content Violation)"
+Athena 4-Stage Pipeline.Stage 1 -> Athena 4-Stage Pipeline.Stage 2: "Top Candidates (<10ms)"
+Athena 4-Stage Pipeline.Stage 2 -> Athena 4-Stage Pipeline.Stage 3: "Similarity Vectors"
+Athena 4-Stage Pipeline.Stage 3 -> Final Decision Payload: "Probability + xAI Audit"
+
+Athena 4-Stage Pipeline.Stage 0 <-> Data Persistence Layer.Derogatory Seeds: "Dynamic Flag Read/Write"
+Athena 4-Stage Pipeline.Stage 1 <-> Data Persistence Layer.PRGI Titles DB: "Phonetic Index Lookup"
+Athena 4-Stage Pipeline.Stage 2 <-> Data Persistence Layer.PRGI Titles DB: "Vector Cosine Search"
+API Gateway Layer <-> Data Persistence Layer.Applications DB: "Dossier Lifecycle Sync"

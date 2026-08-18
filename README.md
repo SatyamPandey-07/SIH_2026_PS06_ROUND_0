@@ -1,185 +1,213 @@
-# Initial Approach
+# Athena: Press Registrar General of India (PRGI) AI Title Verification System
 
-## Overview
-
-The Press Registrar General of India (PRGI) maintains a database of ~160,000 registered newspaper and periodical titles. When publishers submit new titles for verification, the system must ensure uniqueness while enforcing strict compliance guidelines. Athena automates this process through a three-stage verification pipeline:
-
-    - Stage 1 (Fast): Phonetic & fuzzy matching (Soundex, Metaphone, Levenshtein)
-
-    - Stage 2 (Accurate): Transformer-based semantic similarity (RoBERTa Multilingual, XLM-R)
-
-    - Stage 3 (Advanced): Graph neural networks (GLORY) + explainable AI (SHAP, LIME)
-
-The MVP is a Streamlit-based web application that provides real-time title verification with probability scores, detailed feedback, and actionable recommendations for improvement.
+Athena is a production-ready, full-stack AI platform designed for the **Press Registrar General of India (PRGI)** to automate newspaper and periodical title verification, enforce statutory compliance, quarantine offensive/derogatory submissions, and provide explainable AI (xAI) feedback for applicants and administrative registrars.
 
 ---
 
-## Stage 1: Phonetic & Fuzzy Matching (Baseline)
+## 🚀 Key Architecture & System Capabilities
 
-**Purpose**: Fast filtering to eliminate obvious duplicates (<100ms per query)
+### 1. High-Level System Architecture
 
-**Algorithms**:
+![Athena D2 Architecture Diagram](./architecture.svg)
 
-    Soundex: Encodes titles into 4-character phonetic representations
+<details>
+<summary><b>Click to expand D2 Diagram Source Code</b></summary>
 
-    Metaphone: Improved phonetic encoding for English spelling variations
+```d2
+direction: right
 
-    Double Metaphone: Handles multiple pronunciations
+Client Presentation Layer: {
+  label: "🖥️ Client Presentation Layer (React 18 SPA)"
+  Publisher Portal: "Publisher Portal\n(Real-Time Title Verification)"
+  Admin Desk: "Registrar Admin Desk\n(Queue Review & Decisioning)"
+  Analytics Dashboard: "National Analytics Dashboard\n(SVG Charts & Explorer)"
+}
 
-    Levenshtein Distance: Edit distance for spelling variations
+API Gateway Layer: {
+  label: "⚡ API Gateway Layer (FastAPI REST Server)"
+  FastAPI Server: "FastAPI REST API (api.py)\n[Uvicorn / Gunicorn Server]"
+  Endpoints: "/api/verify | /api/applications\n/api/analytics | /api/derogatory/flag"
+}
 
-    Jaro-Winkler Similarity: Better for short strings (titles)
+Athena 4-Stage Pipeline: {
+  label: "🧠 Athena 4-Stage Waterfall Pipeline Engine"
+  Stage 0: "Stage 0: Derogatory Content Shield\n- Leetspeak Reversal (Chr0nicle -> Chronicle)\n- Soundex / Metaphone Seed Matching\n- Sub-2ms Auto-Rejection (Confidence >= 70%)"
+  Stage 1: "Stage 1: Phonetic & Fuzzy Filter\n- Core Brand Word Extractor\n- Generic Suffix Discounting (Times/Express)\n- Inverted Soundex & Metaphone Index"
+  Stage 2: "Stage 2: Cross-Lingual Vector Engine\n- Transformer Embeddings (MiniLM-L12-v2)\n- Jaccard Word Coverage Scaling"
+  Stage 3: "Stage 3: Graph xAI & Statutory Engine\n- Emblems Act & Prefix Prohibition Checkers\n- vis.js Co-Registration Cluster Graph\n- SHAP & LIME Token Feature Importance"
+}
 
-    N-gram Overlap: 2-3 character and word-level n-grams
+Data Persistence Layer: {
+  label: "💾 Data & State Persistence Layer"
+  Derogatory Seeds: "derogatory_seeds.json\n(Community Flagged Seeds)"
+  Applications DB: "applications.db\n(SQLite Application Tracker)"
+  PRGI Titles DB: "prgi_titles.csv\n(82,700+ Registered Title Registry)"
+}
 
-**Thresholds**:
+Client Presentation Layer -> API Gateway Layer: "HTTP / REST JSON"
+API Gateway Layer -> Athena 4-Stage Pipeline.Stage 0: "1. Proposed Title Input"
 
-    Phonetic match: >85% similarity → Flag for review
+Athena 4-Stage Pipeline.Stage 0 -> Athena 4-Stage Pipeline.Stage 1: "Cleared / Borderline"
+Athena 4-Stage Pipeline.Stage 0 -> Direct Rejection: "Flagged >= 0.70 (Content Violation)"
+Athena 4-Stage Pipeline.Stage 1 -> Athena 4-Stage Pipeline.Stage 2: "Top Candidates (<10ms)"
+Athena 4-Stage Pipeline.Stage 2 -> Athena 4-Stage Pipeline.Stage 3: "Similarity Vectors"
+Athena 4-Stage Pipeline.Stage 3 -> Final Decision Payload: "Probability + xAI Audit"
 
-    Levenshtein: <3 edit distance → Flag for review
+Athena 4-Stage Pipeline.Stage 0 <-> Data Persistence Layer.Derogatory Seeds: "Dynamic Flag Read/Write"
+Athena 4-Stage Pipeline.Stage 1 <-> Data Persistence Layer.PRGI Titles DB: "Phonetic Index Lookup"
+Athena 4-Stage Pipeline.Stage 2 <-> Data Persistence Layer.PRGI Titles DB: "Vector Cosine Search"
+```
+</details>
 
-    Jaro-Winkler: >0.85 → Flag for review
+### 2. 4-Stage Waterfall Verification Breakdown
+Athena processes proposed publication titles through a sequential 4-stage waterfall pipeline:
 
-**Output**: List of candidate titles with similarity scores
+* **Stage 0: Derogatory Content Shield**
+  - Normalizes leetspeak & obfuscation (e.g. `Chr0nicle` → `Chronicle`, `Sc@mm3r` → `scammer`).
+  - Performs phonetic (Soundex/Metaphone) & Levenshtein matching against a curated seed list covering Indian languages & English.
+  - Instantly rejects toxic titles ($\ge 70\%$ confidence) or flags suspicious inputs ($40-69\%$).
+  - Supports dynamic reviewer-driven feedback loops via `POST /api/derogatory/flag` with instant in-memory seed expansion.
 
----
+* **Stage 1: Phonetic & Fuzzy Filtering (Sub-10ms)**
+  - Isolates brand core words from generic publication terms (`TIMES`, `EXPRESS`, `GAZETTE`, `CHRONICLE`, `BHARAT`, etc.).
+  - Enforces word-coverage caps to eliminate false positives on shared suffixes.
 
-## Stage 2: Transformer-Based Semantic Similarity
+* **Stage 2: Multilingual Vector Similarity**
+  - Pre-computed embeddings across 82,700+ registered titles.
+  - Applies non-linear Jaccard coverage scaling to prevent 1-word matches from over-flagging multi-word titles.
 
-**Purpose**: Detect semantically similar titles across languages and contexts
-
-**Models**:
-
-    RoBERTa Multilingual (roberta-base): Strong baseline for English + 100+ languages
-
-    XLM-RoBERTa Base (xlm-roberta-base): Better for low-resource Indian languages
-
-    IndicBERT (ai4bharat/indic-bert): Optimized for 12 Indian languages
-
-    Sentence Transformers (paraphrase-multilingual-mpnet-base-v2): Pre-trained for semantic similarity
-
-**Process**:
-
-    Generate embeddings for input title and all 160K existing titles (pre-computed)
-
-    Use FAISS for sub-millisecond similarity search
-
-    Calculate cosine similarity scores
-
-    Apply threshold (0.80 = 80% similarity)
-
-**Output**: Ranked list of semantically similar titles with confidence scores
-
----
-
-## Stage 3: Graph Neural Networks + Explainable AI
-
-**Purpose**: Detect structural patterns, thematic clusters, and provide explanations
-
-**GLORY Architecture**:
-
-    Global Title Graph: Nodes = titles, Edges = co-registration patterns
-
-    Global Entity Graph: Nodes = entities (people, places, orgs), Edges = co-occurrence
-
-    Gated Graph Neural Network (GGNN): Encodes graph structure
-
-    Multi-Head Attention: Combines local + global representations
-
-**Explainable AI (xAI)**:
-
-    SHAP (SHapley Additive exPlanations):
-
-        Global feature importance across all predictions
-
-        Shows which words/entities drive similarity scores
-
-    LIME (Local Interpretable Model-agnostic Explanations):
-
-        Local explanations for individual predictions
-
-        Highlights specific title components causing flags
-
-    Attention Visualization:
-
-        Transformer attention weights showing word-level importance
-
-        Visual heatmaps for user-friendly explanations
-
-**Output**:
-
-    Final verification probability score
-
-    Detailed explanation of rejection reasons
-
-    Visualizations showing influential words/entities
+* **Stage 3: Graph xAI & Statutory Rules Engine**
+  - Emblems and Names (Prevention of Improper Use) Act statutory check.
+  - Prohibition of police/government affiliation prefixes (`Police`, `Crime Branch`, `CBI`).
+  - Interactive vis.js graph network depicting title/owner co-registration clusters.
+  - Self-verifying smart alternatives generator providing 100% pre-validated alternative suggestions.
 
 ---
 
-# Classification Audit & Refined Production Pipeline
+## 🎨 Technology Stack
 
-## 1. Problem Statement & Initial Classification Flaws
-During early testing, the baseline classification pipeline suffered from severe over-flagging and false-positive rejections. Specifically:
-- **Excessive Duplicate Flags**: Legitimate, unique titles sharing generic publication terms (e.g., "Chronicle", "Times", "Express") were being flagged as duplicates with >80% similarity.
-- **Self-Contradictory AI Recommendations**: Recommended alternatives generated by the system (e.g., `Aachran Chronicle`) were being rejected with 0.0% approval probability when fed back into the verification engine.
+### Frontend (React SPA)
+* **Framework**: React 18, TypeScript, Vite
+* **Design Tokens**: Cal.com UI design system (clean typography, crisp badges, dark/light surface tokens)
+* **Visualization**: SVG distribution charts, `vis-network` graph visualization, SHAP-style token heatmaps
+* **Portals**:
+  1. **Publisher Portal**: Real-time verification, explainable feedback, application tracking, smart alternatives.
+  2. **Registrar Admin Desk**: Pending dossier queue, formal determination recorder, manual approval/rejection overrides.
+  3. **National Analytics**: Interactive breakdown of 82,700+ registered titles by State, Language, Periodicity, and State Distribution.
+  4. **Database Explorer**: Live keyword search across the PRGI registered title registry.
 
----
-
-## 2. Root Cause Analysis
-
-1. **Stage 1 (Phonetic & Fuzzy Over-matching)**:
-   - RapidFuzz's `token_set_ratio` treated any title sharing a single word or generic suffix as an **80–85%+ match** regardless of whether core brand words were completely distinct (`Aachran` vs `Rajasthan`).
-
-2. **Stage 2 (TF-IDF Vectorizer Subword & Synonym Inflation)**:
-   - Cosine similarity over char n-grams and concept maps caused rare brand words (`AACHRAN`) to dominate the TF-IDF vector, yielding false 85.4% cosine similarity for titles sharing only 1 word out of a multi-word phrase.
-
-3. **Punitive Linear Penalty Function**:
-   - The linear formula `uniqueness_penalty = highest_similarity * 80.0` penalized baseline noise (50-60% similarity) by 40-48%, dragging distinct titles into `UNDER_REVIEW` or `REJECTED`.
-
-4. **Unvalidated Recommendation Feedback Loop**:
-   - Alternatives were generated without pre-evaluation against the verification engine.
+### Backend (FastAPI REST Service)
+* **Framework**: Python 3.12, FastAPI, Uvicorn / Gunicorn
+* **ML / Analytics**: PyTorch, `sentence-transformers`, RapidFuzz, Phonetics, NetworkX, Pandas
+* **Database / Persistence**: SQLite (`applications.db`), JSON (`derogatory_seeds.json`)
 
 ---
 
-## 3. Implemented Engineering Enhancements
+## 🛠️ API Reference
 
-### A. Core Brand Word Extraction & Generic Term Discounting (Stage 1)
-- Isolated generic publication terms (`CHRONICLE`, `TIMES`, `EXPRESS`, `GAZETTE`, `OBSERVER`, `SAMACHAR`, `INDIA`, `BHARAT`, etc.) from brand core words.
-- If core brand words are disjoint (e.g., `Aachran` vs `Rajasthan`), Stage 1 caps the similarity score at $\le 0.55$.
-
-### B. Jaccard & Word Coverage Scaling (Stage 2)
-- Applied Jaccard word coverage scaling to raw TF-IDF cosine similarity scores:
-  $$\text{Score} = \text{Score}_{\text{TF-IDF}} \times (0.35 + 0.65 \times \text{Jaccard})$$
-- Prevents 1-word matches out of multi-word titles from artificially scoring >85%.
-
-### C. Calibrated Non-Linear Penalty Curve (Pipeline)
-- Replaced the linear penalty with a realistic piecewise curve aligned with PRGI statutory thresholds:
-  - $\le 60\%$ similarity: Penalty $0 - 12\%$ $\rightarrow$ **APPROVED (88–100% prob)**
-  - $60 - 80\%$ similarity: Penalty $12 - 35\%$ $\rightarrow$ **APPROVED / UNDER REVIEW (65–88% prob)**
-  - $> 80\%$ similarity: Penalty $35 - 90\%$ $\rightarrow$ **REJECTED**
-
-### D. Self-Verifying Smart Alternatives Engine
-- Updated `generate_smart_alternatives()` to run pre-verification checks on all candidate titles.
-- Guarantees that **100% of recommended alternatives** achieve **APPROVED** status when submitted back to the pipeline.
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/health` | `GET` | System status and dataset counts |
+| `/api/verify` | `POST` | Executes 4-stage verification on proposed title |
+| `/api/applications` | `GET` | List all submitted application dossiers |
+| `/api/applications/submit` | `POST` | Submit new title application for registrar review |
+| `/api/applications/{app_id}/decision` | `POST` | Record registrar approval/rejection decision |
+| `/api/analytics` | `GET` | Distribution analytics (State, Language, Periodicity) |
+| `/api/explorer` | `GET` | Search PRGI registered title registry |
+| `/api/derogatory/flag` | `POST` | Add new derogatory term with auto-fuzzy expansion |
+| `/api/derogatory/list` | `GET` | Retrieve active Stage 0 seed terms |
 
 ---
 
-## 4. Verification & Benchmark Performance
+## 🌐 Local Development Setup
 
-### Test Suite Execution Summary:
+### Prerequisites
+* Python 3.10+
+* Node.js 18+ and npm
 
-| Test Scenario | Query Title | Initial Verdict | Refined Verdict | Key Findings |
+### 1. Start FastAPI Backend
+```bash
+# Set up Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install backend dependencies
+pip install fastapi uvicorn pydantic phonetics pandas sentence-transformers scikit-learn networkx matplotlib jinja2
+
+# Run backend server
+python3 -m uvicorn api:app --host 0.0.0.0 --port 8000
+```
+Backend API will be live at `http://localhost:8000`.
+
+### 2. Start React SPA Frontend
+```bash
+cd web
+npm install
+npm run dev
+```
+Frontend application will be live at `http://localhost:5173`.
+
+---
+
+## ☁️ Production Deployment Guide (AWS Free Tier / Single VM)
+
+Athena is designed for lightweight deployment without requiring dedicated GPU infrastructure.
+
+### Free Tier Specs & Swap Configuration
+When deploying on an **AWS EC2 Free Tier (`t2.micro` / `t3.micro`)** with 1 vCPU and 1 GB RAM, configure a 3 GB Swap file to handle PyTorch model loading cleanly:
+
+```bash
+# Create 3 GB swap memory file on EBS volume
+sudo fallocate -l 3G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# Restrict PyTorch to single-thread mode
+export OMP_NUM_THREADS=1
+```
+
+### Production Build & Nginx Setup
+```bash
+# 1. Build React production bundle
+cd web && npm run build
+
+# 2. Serve static assets via Nginx and proxy /api to FastAPI (port 8000)
+```
+
+Nginx configuration snippet:
+```nginx
+server {
+    listen 80;
+    server_name athena.prgi.gov.in;
+
+    location / {
+        root /var/www/athena/web/dist;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+---
+
+## 📊 Benchmark Verification Performance
+
+| Test Scenario | Query Title | Initial Verdict | Athena Final Verdict | Key Engine Finding |
 | :--- | :--- | :--- | :--- | :--- |
-| **Novel Title** | `Quantum Antigravity Horizons Gazette` | ❌ UNDER REVIEW (46.5%) | ✅ **APPROVED (89.0%)** | Correctly approves distinct titles |
-| **Exact Collision** | `A &S INDIA` | ❌ REJECTED (0.0%) | ❌ **REJECTED (0.0%)** | Correctly rejects 100% duplicate |
-| **Statutory Violation** | `Police Crime Branch Times` | ❌ REJECTED (0.0%) | ❌ **REJECTED (0.0%)** | Correctly flags Emblems Act violations |
-| **Periodicity Trick** | `Dainik Aachran` | ❌ REJECTED (27.0%) | ❌ **REJECTED (4.0%)** | Flags illegal periodicity prefix additions |
+| **Novel Title** | `Quantum Antigravity Horizons Gazette` | ❌ UNDER REVIEW | ✅ **APPROVED (89.0%)** | Approves distinct titles with non-conflicting core words |
+| **Derogatory Evasion** | `The Sc@mm3r Times` | N/A | ❌ **REJECTED (0.0%)** | Stage 0 Shield catches leetspeak slur in 1.65ms |
+| **Exact Collision** | `A &S INDIA` | ❌ REJECTED | ❌ **REJECTED (0.0%)** | Stage 1 catches 100% exact duplicate |
+| **Statutory Violation** | `Police Crime Branch Times` | ❌ REJECTED | ❌ **REJECTED (0.0%)** | Flags statutory Emblems Act violations |
+| **Periodicity Trick** | `Dainik Aachran` | ❌ REJECTED | ❌ **REJECTED (4.0%)** | Flags illegal periodicity prefix additions |
 
-### Verified Smart Alternatives Feedback Loop:
+---
 
-| Proposed Title | Smart Alternative | Verdict | Max Similarity | Approval Prob |
-| :--- | :--- | :--- | :--- | :--- |
-| `Dainik Aachran` | `Aachran Observer` | ✅ **APPROVED** | 69.0% | **77.7%** |
-| `Dainik Aachran` | `Aachran Horizon` | ✅ **APPROVED** | 65.1% | **82.1%** |
-| `Dainik Aachran` | `Aachran Chetna` | ✅ **APPROVED** | 67.9% | **78.9%** |
-| `Dainik Aachran` | `Aachran Darpan` | ✅ **APPROVED** | 74.3% | **71.6%** |
+## 📝 License
+Developed for the Press Registrar General of India (PRGI) Title Verification Challenge (SIH 2026).

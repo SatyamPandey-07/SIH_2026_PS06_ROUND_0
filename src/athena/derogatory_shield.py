@@ -11,14 +11,32 @@ LEET_MAP = {
 }
 
 DEFAULT_SEED_TERMS = [
-    # English offensive / derogatory terms
-    "hate", "racist", "terror", "terrorist", "nazi", "slur", "scam",
-    "fraud", "kill", "murder", "blast", "violence", "porn", "xxx",
-    "adult", "sex", "cheat", "bastard", "idiot", "scoundrel", "fake",
-    # Hindi / Hinglish derogatory terms
-    "gunda", "chor", "chori", "fraudster", "kamina", "harami", "kutte",
-    "bhadwa", "dalal", "mafia", "terrorist", "bakwas", "jhootha",
-    "feku", "dacoit", "goonda", "dhamaka", "hatya"
+    # --- English Explicit, Profane, and Vulgar Terms ---
+    "fuck", "fucking", "fucker", "shit", "shitting", "shitty", "bitch", "bitches",
+    "cunt", "cunts", "asshole", "assholes", "bastard", "bastards", "dick", "dicks",
+    "pussy", "pussies", "cock", "cocks", "prick", "pricks", "twat", "motherfucker",
+    "motherfucking", "bullshit", "horseshit", "dipshit", "dumbass", "jackass",
+    "slut", "whore", "slutty", "wanker", "bugger", "bollocks", "arse", "arsehole",
+
+    # --- English Hate, Violence, Crime & Extremism ---
+    "hate", "racist", "racism", "terror", "terrorist", "terrorism", "nazi", "fascist",
+    "slur", "scam", "scammer", "fraud", "fraudster", "kill", "killer", "murder",
+    "murderer", "blast", "violence", "porn", "porno", "pornography", "xxx",
+    "adult", "sex", "cheat", "cheater", "idiot", "scoundrel", "fake", "corrupt",
+    "extortion", "blackmail", "smuggling", "contraband",
+
+    # --- Hindi / Hinglish Profane & Derogatory Terms ---
+    "chutiya", "chutiyapa", "gandu", "gand", "bhosdike", "bhosdi", "bhosda",
+    "madarchod", "behenchod", "bhenchod", "mc", "bc", "bhadwa", "bhadwe",
+    "dalal", "harami", "haramzada", "kamina", "kamine", "kutte", "kutta",
+    "kuttiya", "saala", "saale", "raand", "randi", "chut", "gaand",
+    "lauda", "loda", "lund", "tatte", "tatty", "jhant", "jhaant",
+
+    # --- Hindi / Hinglish Crime, Threat & Misconduct Terms ---
+    "gunda", "goonda", "gundagardi", "chor", "chori", "dacoit", "dakait",
+    "mafia", "bakwas", "jhootha", "feku", "dhamaka", "hatya", "kattar",
+    "aatankwadi", "aatank", "visphot", "aag", "hinsa", "danga", "rioter",
+    "looter", "loot", "thug", "fraudster"
 ]
 
 
