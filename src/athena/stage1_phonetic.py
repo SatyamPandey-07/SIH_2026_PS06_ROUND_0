@@ -3,6 +3,16 @@ import jellyfish
 from rapidfuzz import fuzz, distance
 from athena.data_loader import PRGIDataLoader
 
+GENERIC_PUBLICATION_TERMS = {
+    "CHRONICLE", "OBSERVER", "HORIZON", "DARPAN", "CHETNA", "MANTHAN", "SANKALP",
+    "DEEPAK", "SANDESH", "VANI", "INSIGHT", "SENTINEL", "PRATIBHA", "PRAKASH", "KIRAN",
+    "TIMES", "NEWS", "EXPRESS", "BULLETIN", "INDIA", "BHARAT", "GAZETTE", "POST",
+    "DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "DAINIK", "SAPTAHIK", "MASIK", "SAMAY",
+    "REVIEW", "JOURNAL", "DIGEST", "FORUM", "SAMACHAR", "PATRIKA", "VOICE", "MIRROR",
+    "LEDGER", "MONITOR", "DISPATCH", "HERALD", "TRIBUNE", "REPORT", "MAGAZINE", "RECORD",
+    "PRABHAT", "SANDHYA", "SHODH", "PRAVAH", "TARANG", "JYOTI", "VIKAS", "SANGAM"
+}
+
 class Stage1PhoneticMatcher:
     def __init__(self, data_loader: PRGIDataLoader = None):
         self.loader = data_loader or PRGIDataLoader.get_instance()
@@ -52,8 +62,6 @@ class Stage1PhoneticMatcher:
             
         # If candidate pool is too small, check full database with rapid ratio
         if len(candidate_indices) < 50:
-            # Quick rapidfuzz scan across unique titles
-            # Using process extract or first letter slice
             first_char = clean_input[0] if clean_input else ""
             char_candidates = [
                 i for i, t in enumerate(self.loader.titles)
@@ -64,17 +72,26 @@ class Stage1PhoneticMatcher:
         candidates = []
         flagged = False
         
+        w1 = set(words)
+        core1 = {w for w in w1 if w not in GENERIC_PUBLICATION_TERMS}
+        if not core1:
+            core1 = set(w1)
+
         for idx in candidate_indices:
             row = self.loader.df.iloc[idx]
             db_title = row["clean_title"]
             if not db_title:
                 continue
                 
-            # Compute algorithms
+            w2 = set(db_title.split())
+            core2 = {w for w in w2 if w not in GENERIC_PUBLICATION_TERMS}
+            if not core2:
+                core2 = set(w2)
+                
             # Levenshtein distance
             lev_dist = distance.Levenshtein.distance(clean_input, db_title)
             
-            # Jaro-Winkler similarity (0 to 1)
+            # Jaro-Winkler similarity
             jw_sim = jellyfish.jaro_winkler_similarity(clean_input, db_title)
             
             # Soundex & Metaphone match
@@ -84,69 +101,69 @@ class Stage1PhoneticMatcher:
             except Exception:
                 soundex_match, metaphone_match = False, False
                 
-            # N-gram similarity (3-gram)
             ngram_sim = self._ngram_similarity(clean_input, db_title, n=3)
             
-            # RapidFuzz ratio / Token Sort ratio / Token Set ratio (0 to 1)
             fuzz_ratio = fuzz.ratio(clean_input, db_title) / 100.0
             token_sort_ratio = fuzz.token_sort_ratio(clean_input, db_title) / 100.0
             token_set_ratio = fuzz.token_set_ratio(clean_input, db_title) / 100.0
 
-            # Token overlap Jaccard
-            w1 = set(clean_input.split())
-            w2 = set(db_title.split())
             token_jaccard = len(w1 & w2) / max(1, len(w1 | w2))
-            
-            # Identify core brand words by removing generic publication suffixes/prefixes
-            GENERIC_TERMS = {
-                "CHRONICLE", "OBSERVER", "HORIZON", "DARPAN", "CHETNA", "MANTHAN", "SANKALP",
-                "DEEPAK", "SANDESH", "VANI", "INSIGHT", "SENTINEL", "PRATIBHA", "PRAKASH", "KIRAN",
-                "TIMES", "NEWS", "EXPRESS", "BULLETIN", "INDIA", "BHARAT", "GAZETTE", "POST",
-                "DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "DAINIK", "SAPTAHIK", "MASIK", "SAMAY"
-            }
-            core1 = {w for w in w1 if w not in GENERIC_TERMS}
-            core2 = {w for w in w2 if w not in GENERIC_TERMS}
+            core_overlap = core1 & core2
             
             # Check phonetic/spelling similarity between core words
             core_phonetic_overlap = False
             for w_a in core1:
                 for w_b in core2:
+                    lev_w = distance.Levenshtein.distance(w_a, w_b)
+                    fz_w = fuzz.ratio(w_a, w_b)
+                    sx_w_match = (jellyfish.soundex(w_a) == jellyfish.soundex(w_b))
+                    mp_w_match = (jellyfish.metaphone(w_a) == jellyfish.metaphone(w_b))
+                    
                     if (
                         w_a == w_b
-                        or jellyfish.soundex(w_a) == jellyfish.soundex(w_b)
-                        or jellyfish.metaphone(w_a) == jellyfish.metaphone(w_b)
-                        or distance.Levenshtein.distance(w_a, w_b) <= 2
-                        or fuzz.ratio(w_a, w_b) >= 80.0
+                        or (mp_w_match and lev_w <= 2)
+                        or (sx_w_match and mp_w_match and lev_w <= 3)
+                        or lev_w <= 1
+                        or fz_w >= 82.0
                     ):
                         core_phonetic_overlap = True
                         break
                 if core_phonetic_overlap:
                     break
 
-            # Weighted Stage 1 Score
-            # If lengths differ significantly, discount raw Jaro-Winkler
             len_ratio = min(len(clean_input), len(db_title)) / max(len(clean_input), len(db_title))
-            adjusted_jw = jw_sim * (0.5 + 0.5 * len_ratio)
 
-            combined_score = max(
-                fuzz_ratio,
-                token_sort_ratio * (0.6 + 0.4 * token_jaccard),
-                adjusted_jw if len_ratio > 0.6 else fuzz_ratio,
-                0.95 if (lev_dist <= 1 and abs(len(clean_input) - len(db_title)) <= 1) else 0.0,
-                0.90 if (soundex_match and metaphone_match and (token_jaccard > 0.6 or core_phonetic_overlap)) else 0.0,
-                0.88 if (core_phonetic_overlap and lev_dist <= 2 and abs(len(clean_input) - len(db_title)) <= 2) else 0.0
-            )
-            
-            # If core brand words exist and are completely disjoint and have zero phonetic similarity, cap score
-            if core1 and core2 and not (core1 & core2) and not core_phonetic_overlap:
-                combined_score = min(combined_score, 0.55)
+            # Multi-word scoring logic
+            if len(words) >= 2 or len(w2) >= 2:
+                if core_overlap or core_phonetic_overlap:
+                    combined_score = max(
+                        fuzz_ratio,
+                        token_sort_ratio,
+                        0.95 if (lev_dist <= 2 and abs(len(clean_input) - len(db_title)) <= 2) else 0.0,
+                        0.90 if (soundex_match and metaphone_match) else 0.0,
+                        0.88 if (core_phonetic_overlap and lev_dist <= 3) else 0.0
+                    )
+                else:
+                    # No core word match (only shared generic word or zero overlap)
+                    if token_jaccard > 0:
+                        # Scaled by actual token jaccard overlap
+                        combined_score = min(token_sort_ratio * token_jaccard, 0.25)
+                    else:
+                        # Completely distinct titles
+                        combined_score = min(fuzz_ratio * 0.25, 0.15)
+            else:
+                # Single word titles
+                combined_score = max(
+                    fuzz_ratio,
+                    jw_sim if len_ratio > 0.7 else fuzz_ratio,
+                    0.95 if (lev_dist <= 1) else 0.0,
+                    0.90 if (soundex_match and metaphone_match) else 0.0
+                )
 
-            # Flagging rules from README / PS06
-            # Phonetic match >85% | Levenshtein <3 | Jaro-Winkler >0.85
+            # Flagging rules
             is_flagged = (
-                (soundex_match or metaphone_match) and combined_score >= 0.85
-            ) or (lev_dist < 3 and min(len(clean_input), len(db_title)) > 4 and (token_jaccard >= 0.5 or core_phonetic_overlap)) or (fuzz_ratio >= 0.85 and (token_jaccard >= 0.6 or core_phonetic_overlap)) or (token_sort_ratio >= 0.90 and token_jaccard >= 0.75) or (core_phonetic_overlap and combined_score >= 0.85)
-
+                (soundex_match or metaphone_match) and combined_score >= 0.80
+            ) or (lev_dist < 3 and min(len(clean_input), len(db_title)) > 4 and (token_jaccard >= 0.5 or core_phonetic_overlap)) or (fuzz_ratio >= 0.85) or (token_sort_ratio >= 0.85 and (token_jaccard >= 0.5 or core_phonetic_overlap))
             
             if is_flagged:
                 flagged = True
@@ -172,7 +189,6 @@ class Stage1PhoneticMatcher:
                 "is_flagged": is_flagged
             })
             
-        # Sort candidates by highest similarity score
         candidates.sort(key=lambda x: (x["is_flagged"], x["stage1_score"], -x["levenshtein_distance"]), reverse=True)
         top_candidates = candidates[:top_k]
         

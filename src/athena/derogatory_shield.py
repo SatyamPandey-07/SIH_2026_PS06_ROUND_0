@@ -135,7 +135,7 @@ class DerogatoryShield:
 
     def check_title(self, title: str) -> Dict[str, Any]:
         normalized = normalize_leetspeak(title)
-        words = [w for w in normalized.split() if len(w) > 2]
+        words = [w for w in normalized.split() if len(w) >= 2]
 
         flagged_tokens = []
         max_confidence = 0.0
@@ -147,41 +147,27 @@ class DerogatoryShield:
                 max_confidence = max(max_confidence, 1.0)
                 continue
 
-            # Compute word phonetics
-            try:
-                w_sndx = phonetics.soundex(word)
-                w_meta = phonetics.dmetaphone(word)[0]
-            except Exception:
-                w_sndx, w_meta = "", ""
-
-            for seed, (s_sndx, s_meta) in self.phonetic_seeds.items():
-                # Substring containment check
-                if seed in word or word in seed:
-                    confidence = 0.85 if len(seed) >= 4 else 0.70
+            # 2. Substring containment check (only for long specific derogatory roots of len >= 5)
+            for seed in self.seed_terms:
+                if len(seed) >= 5 and (seed in word or (len(word) >= 5 and word in seed)):
+                    confidence = 0.85
                     flagged_tokens.append({"word": word, "seed_match": seed, "match_type": "SUBSTRING", "confidence": confidence})
                     max_confidence = max(max_confidence, confidence)
                     break
 
-                # Edit distance check
-                dist = levenshtein_distance(word, seed)
-                max_len = max(len(word), len(seed))
-                sim = 1.0 - (dist / max_len)
-
-                if sim >= 0.75:
-                    flagged_tokens.append({"word": word, "seed_match": seed, "match_type": "FUZZY_EDIT", "confidence": round(sim, 2)})
-                    max_confidence = max(max_confidence, round(sim, 2))
-                    break
-
-                # Phonetic soundex / metaphone match
-                if (w_sndx and w_sndx == s_sndx) or (w_meta and w_meta == s_meta):
-                    flagged_tokens.append({"word": word, "seed_match": seed, "match_type": "PHONETIC", "confidence": 0.75})
-                    max_confidence = max(max_confidence, 0.75)
-                    break
+                # 3. High edit distance similarity (only for seeds of len >= 5 with dist <= 1)
+                if len(seed) >= 5 and len(word) >= 5:
+                    dist = levenshtein_distance(word, seed)
+                    if dist <= 1:
+                        sim = 1.0 - (dist / max(len(word), len(seed)))
+                        flagged_tokens.append({"word": word, "seed_match": seed, "match_type": "FUZZY_EDIT", "confidence": round(sim, 2)})
+                        max_confidence = max(max_confidence, round(sim, 2))
+                        break
 
         status = "PASSED"
-        if max_confidence >= 0.70:
+        if max_confidence >= 0.75:
             status = "REJECTED"
-        elif max_confidence >= 0.40:
+        elif max_confidence >= 0.50:
             status = "UNDER_REVIEW"
 
         return {

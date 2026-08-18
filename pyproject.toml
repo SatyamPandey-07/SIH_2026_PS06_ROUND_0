@@ -8,6 +8,7 @@ dependencies = [
     "jellyfish>=1.2.1",
     "networkx>=3.6.1",
     "pandas>=3.0.5",
+    "phonetics>=1.0.5",
     "plotly>=6.9.0",
     "pymupdf>=1.28.2",
     "rapidfuzz>=3.14.5",

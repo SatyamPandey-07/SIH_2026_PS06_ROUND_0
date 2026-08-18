@@ -105,9 +105,9 @@ class Stage2SemanticMatcher:
             jaccard = len(common_words) / max(1, len(union_words))
             query_cov = len(common_words) / max(1, len(query_words))
             
-            # If word sets are not identical, scale raw TF-IDF score by Jaccard and word coverage
+            # If word sets are not identical, scale raw TF-IDF score by Jaccard and query word coverage
             if jaccard < 1.0:
-                coverage_factor = 0.35 + 0.65 * jaccard
+                coverage_factor = max(0.15, 0.4 * jaccard + 0.6 * query_cov)
                 score = score * coverage_factor
 
             is_flagged = score >= threshold
